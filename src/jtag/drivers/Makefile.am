@@ -141,6 +141,9 @@ endif
 if SYSFSGPIO
 DRIVERFILES += %D%/sysfsgpio.c
 endif
+if MBPROG
+DRIVERFILES += %D%/mbprog.c
+endif
 if BCM2835GPIO
 DRIVERFILES += %D%/bcm2835gpio.c
 endif

@@ -325,6 +325,10 @@ AC_ARG_ENABLE([buspirate],
 AC_ARG_ENABLE([sysfsgpio],
   AS_HELP_STRING([--enable-sysfsgpio], [Enable building support for programming driven via sysfs gpios.]),
   [build_sysfsgpio=$enableval], [build_sysfsgpio=no])
+  
+AC_ARG_ENABLE([mbprog],
+  AS_HELP_STRING([--enable-mbprog], [Enable building support for programming driven via sysfs gpios.]),
+  [build_mbprog=$enableval], [build_mbprog=no])
 
 AS_CASE([$host_os],
   [linux*], [],
@@ -520,6 +524,13 @@ AS_IF([test "x$build_bcm2835gpio" = "xyes"], [
   AC_DEFINE([BUILD_BCM2835GPIO], [0], [0 if you don't want bcm2835gpio.])
 ])
 
+AS_IF([test "x$build_mbprog" = "xyes"], [
+  build_bitbang=yes
+  AC_DEFINE([BUILD_MBPROG], [1], [1 if you want mbprog.])
+], [
+  AC_DEFINE([BUILD_MBPROG], [0], [0 if you don't want mbprog.])
+])
+
 AS_IF([test "x$build_imx_gpio" = "xyes"], [
   build_bitbang=yes
   AC_DEFINE([BUILD_IMX_GPIO], [1], [1 if you want imx_gpio.])
@@ -697,6 +708,7 @@ AM_CONDITIONAL([ZY1000_MASTER], [test "x$build_zy1000_master" = "xyes"])
 AM_CONDITIONAL([IOUTIL], [test "x$build_ioutil" = "xyes"])
 AM_CONDITIONAL([AT91RM9200], [test "x$build_at91rm9200" = "xyes"])
 AM_CONDITIONAL([BCM2835GPIO], [test "x$build_bcm2835gpio" = "xyes"])
+AM_CONDITIONAL([MBPROG], [test "x$build_mbprog" = "xyes"])
 AM_CONDITIONAL([IMX_GPIO], [test "x$build_imx_gpio" = "xyes"])
 AM_CONDITIONAL([BITBANG], [test "x$build_bitbang" = "xyes"])
 AM_CONDITIONAL([JTAG_VPI], [test "x$build_jtag_vpi" = "xyes" -o "x$build_jtag_vpi" = "xyes"])
