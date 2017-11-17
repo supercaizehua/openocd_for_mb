@@ -87,19 +87,12 @@ static int open_write_close(const char *name, const char *valstr)
 /*
  * Helper func to unexport gpio from sysfs
  */
-static void unexport_mbprog(int gpio)
-{
-	char gpiostr[4];
-
-	if (!is_gpio_valid(gpio))
-		return;
-
-	snprintf(gpiostr, sizeof(gpiostr), "%d", gpio);
-	if (open_write_close("/sys/class/gpio/unexport", gpiostr) < 0)
-		LOG_ERROR("Couldn't unexport gpio %d", gpio);
-
-	return;
-}
+/* static void unexport_mbprog(int gpio) */
+/* { */
+/* 	if (!is_gpio_valid(gpio)) */
+/* 		return; */
+/* 	return; */
+/* } */
 
 /*
  * Exports and sets up direction for gpio.
@@ -112,42 +105,12 @@ static void unexport_mbprog(int gpio)
  */
 static int setup_mbprog(int gpio, int is_output, int init_high)
 {
-	char buf[40];
-	char gpiostr[4];
+//	char buf[40];
+//	char gpiostr[4];
 	int ret;
 
 	if (!is_gpio_valid(gpio))
 		return ERROR_OK;
-
-	snprintf(gpiostr, sizeof(gpiostr), "%d", gpio);
-	ret = open_write_close("/sys/class/gpio/export", gpiostr);
-	if (ret < 0) {
-		if (errno == EBUSY) {
-			LOG_WARNING("gpio %d is already exported", gpio);
-		} else {
-			LOG_ERROR("Couldn't export gpio %d", gpio);
-			perror("mbprog: ");
-			return ERROR_FAIL;
-		}
-	}
-
-	snprintf(buf, sizeof(buf), "/sys/class/gpio/gpio%d/direction", gpio);
-	ret = open_write_close(buf, is_output ? (init_high ? "high" : "low") : "in");
-	if (ret < 0) {
-		LOG_ERROR("Couldn't set direction for gpio %d", gpio);
-		perror("mbprog: ");
-		unexport_mbprog(gpio);
-		return ERROR_FAIL;
-	}
-
-	snprintf(buf, sizeof(buf), "/sys/class/gpio/gpio%d/value", gpio);
-	ret = open(buf, O_RDWR | O_NONBLOCK | O_SYNC);
-	if (ret < 0) {
-		LOG_ERROR("Couldn't open value for gpio %d", gpio);
-		perror("mbprog: ");
-		unexport_mbprog(gpio);
-	}
-
 	return ret;
 }
 
@@ -545,7 +508,7 @@ static void cleanup_fd(int fd, int gpio)
 		if (fd >= 0)
 			close(fd);
 
-		unexport_mbprog(gpio);
+//		unexport_mbprog(gpio);
 	}
 }
 

@@ -26,6 +26,13 @@
 #include "config.h"
 #endif
 
+#include <errno.h>
+#include <fcntl.h> 
+#include <string.h>
+#include <termios.h>
+#include <unistd.h>
+#include <stdio.h>
+
 #include "bitbang.h"
 #include <jtag/interface.h>
 #include <jtag/commands.h>
@@ -348,34 +355,187 @@ int bitbang_execute_queue(void)
 bool swd_mode;
 static int queued_retval;
 
+int set_interface_attribs (int fd, int speed, int parity)
+{
+    struct termios tty;
+    memset (&tty, 0, sizeof tty);
+    if (tcgetattr (fd, &tty) != 0)
+    {
+        printf ("error %d from tcgetattr", errno);
+        return -1;
+    }
+
+    cfsetospeed (&tty, speed);
+    cfsetispeed (&tty, speed);
+
+    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
+    // disable IGNBRK for mismatched speed tests; otherwise receive break
+    // as \000 chars
+    tty.c_iflag &= ~IGNBRK;         // disable break processing
+    tty.c_lflag = 0;                // no signaling chars, no echo,
+    // no canonical processing
+    tty.c_oflag = 0;                // no remapping, no delays
+    tty.c_cc[VMIN]  = 1;            // read doesn't block
+    tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
+
+    tty.c_iflag &= ~(IXON | IXOFF | IXANY); // shut off xon/xoff ctrl
+
+    tty.c_cflag |= (CLOCAL | CREAD);// ignore modem controls,
+    // enable reading
+    tty.c_cflag &= ~(PARENB | PARODD);      // shut off parity
+    tty.c_cflag |= parity;
+    tty.c_cflag &= ~CSTOPB;
+    tty.c_cflag &= ~CRTSCTS;
+
+    if (tcsetattr (fd, TCSANOW, &tty) != 0)
+    {
+        printf ("error %d from tcsetattr", errno);
+        return -1;
+    }
+    return 0;
+}
+
+void
+set_blocking (int fd, int should_block)
+{
+    struct termios tty;
+    memset (&tty, 0, sizeof tty);
+    if (tcgetattr (fd, &tty) != 0)
+    {
+        printf ("error %d from tggetattr", errno);
+        return;
+    }
+
+    tty.c_cc[VMIN]  = should_block ? 1 : 0;
+    tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
+
+    if (tcsetattr (fd, TCSANOW, &tty) != 0)
+        printf ("error %d setting term attributes", errno);
+}
+int fd;
+
+
+
 static int bitbang_swd_init(void)
 {
 	LOG_DEBUG("bitbang_swd_init");
 	swd_mode = true;
+    char *portname = "/dev/ttyACM0";
+    fd = open (portname, O_RDWR | O_NOCTTY | O_SYNC);
+    if (fd < 0)
+    {
+        printf ("error %d opening %s: %s", errno, portname, strerror (errno));
+        return ERROR_FAIL;
+    }
+    set_interface_attribs (fd, B115200, 0);  // set speed to 115,200 bps, 8n1 (no parity)
+    set_blocking (fd, 0);                // set no blocking
+    
 	return ERROR_OK;
 }
+
+#define GET_UPPER_HEX(x) ((((x) >> 4) & 0x0F) > 9 ? ((((x) >> 4) & 0x0F) - 10 + 'A') : ((((x) >> 4) & 0x0F) + '0'))
+#define GET_LOWER_HEX(x) (((x) & 0x0F) > 9 ? (((x) & 0x0F) - 10 + 'A') : (((x) & 0x0F) + '0'))
+#define HEX_TO_INT(x) ((x) >= 'A' ? ((x) - 'A' + 10) : ((x) - '0'))
+uint8_t local_buf[1024];
+
+#define PRINTF(x, ...) do {                     \
+    }while(0)                                   \
+    
+#define USLEEP(x, ...) do {                     \
+    }while(0)                                   \
+    
 
 static void bitbang_exchange(bool rnw, uint8_t buf[], unsigned int offset, unsigned int bit_cnt)
 {
 	LOG_DEBUG("bitbang_exchange");
-	int tdi;
-
-	for (unsigned int i = offset; i < bit_cnt + offset; i++) {
-		int bytec = i/8;
-		int bcval = 1 << (i % 8);
-		tdi = !rnw && (buf[bytec] & bcval);
-
-		bitbang_interface->write(0, 0, tdi);
-
-		if (rnw && buf) {
-			if (bitbang_interface->swdio_read())
-				buf[bytec] |= bcval;
-			else
-				buf[bytec] &= ~bcval;
-		}
-
-		bitbang_interface->write(1, 0, tdi);
-	}
+//	int tdi;
+    int data_len = DIV_ROUND_UP(bit_cnt + offset, 8);
+    char hex[128];
+    int n;
+    int i = 0;
+    int data_cnt = 0;
+    if (rnw) {
+        hex[0] = 0xF1;
+        hex[1] = GET_UPPER_HEX(bit_cnt);
+        hex[2] = GET_LOWER_HEX(bit_cnt);
+        hex[3] = GET_UPPER_HEX(offset);
+        hex[4] = GET_LOWER_HEX(offset);
+        if (buf != NULL) {
+            hex[5] = GET_UPPER_HEX(data_len);
+            hex[6] = GET_LOWER_HEX(data_len);
+        } else {
+            hex[5] = '0';
+            hex[6] = '0';
+        }
+        n = write(fd, hex, 7);
+        if (buf == NULL) {
+            usleep(10000);
+            return;
+        }
+        while(1) {
+            n = read (fd, hex, sizeof(hex));  // read up to 1 character if ready to read */
+            for (i = 0; i < n; i++) {
+                PRINTF("data_cnt = %d\r\n", data_cnt);
+                if ((data_cnt & 0x01) == 0) {
+                    local_buf[(data_cnt++) / 2] = (HEX_TO_INT(hex[i]) << 4);
+                } else {
+                    local_buf[(data_cnt++) / 2] |= (HEX_TO_INT(hex[i]) << 0);
+                }
+            }
+            if (data_cnt / 2 == data_len) {
+                /* LOG_DEBUG("Read OK\r\n");                  */
+                for (i = offset; (unsigned int)i < bit_cnt + offset; i++) {
+                    int bytec = i/8;
+                    int bcval = 1 << (i % 8);
+                    if (local_buf[bytec] & bcval)
+                        buf[bytec] |= bcval;
+                    else
+                        buf[bytec] &= ~bcval;
+                }
+               PRINTF("read receiving:\r\n");
+                for (i = 0; i < data_len; i++) {
+                    PRINTF("%02x ", buf[i]);
+                }
+                PRINTF("\r\n");
+                return;
+            }
+        }
+    } else {
+        hex[0] = 0xF0;
+        hex[1] = GET_UPPER_HEX(bit_cnt);
+        hex[2] = GET_LOWER_HEX(bit_cnt);
+        hex[3] = GET_UPPER_HEX(offset);
+        hex[4] = GET_LOWER_HEX(offset);
+        if (buf != NULL) {
+            hex[5] = GET_UPPER_HEX(data_len);
+            hex[6] = GET_LOWER_HEX(data_len);
+        } else {
+            hex[5] = '0';
+            hex[6] = '0';
+        }
+        n = write(fd, hex, 7);
+        if (buf != NULL) {
+            for (i = 0; i < data_len; i++){
+                hex[0] = GET_UPPER_HEX(buf[i]);
+                hex[1] = GET_LOWER_HEX(buf[i]);
+                n = write(fd, hex, 2);                            
+            }
+        }
+        data_cnt = 0;
+        while(1) {
+            n = read (fd, hex, sizeof(hex));  // read up to 1 character if ready to read */
+            for (i = 0; i < n; i++) {
+                if ((data_cnt & 0x01) == 0) {
+                    local_buf[(data_cnt++) / 2] = (HEX_TO_INT(hex[i]) << 4);
+                } else {
+                    local_buf[(data_cnt++) / 2] |= (HEX_TO_INT(hex[i]) << 0);
+                }
+            }
+            if (data_cnt / 2 == 1) {
+                return;
+            }
+        }
+    }
 }
 
 int bitbang_swd_switch_seq(enum swd_special_seq seq)
@@ -414,7 +574,22 @@ static void swd_clear_sticky_errors(void)
 	bitbang_swd_write_reg(swd_cmd(false,  false, DP_ABORT),
 		STKCMPCLR | STKERRCLR | WDERRCLR | ORUNERRCLR, 0);
 }
-
+static void bitbang_interface_swdio_drive(bool out)
+{
+    volatile int i;
+    uint8_t hex[2];
+    if (out) {
+        hex[0] = 0xE1;
+        i = write(fd, hex, 1);
+    } else {
+        hex[0] = 0xE0;
+        i = write(fd, hex, 1);
+    }
+    if (i == 0) {
+        LOG_DEBUG("What?\r\n");
+    }
+    
+};
 static void bitbang_swd_read_reg(uint8_t cmd, uint32_t *value, uint32_t ap_delay_clk)
 {
 	LOG_DEBUG("bitbang_swd_read_reg");
@@ -431,9 +606,9 @@ static void bitbang_swd_read_reg(uint8_t cmd, uint32_t *value, uint32_t ap_delay
 		cmd |= SWD_CMD_START | (1 << 7);
 		bitbang_exchange(false, &cmd, 0, 8);
 
-		bitbang_interface->swdio_drive(false);
+		bitbang_interface_swdio_drive(false);
 		bitbang_exchange(true, trn_ack_data_parity_trn, 0, 1 + 3 + 32 + 1 + 1);
-		bitbang_interface->swdio_drive(true);
+		bitbang_interface_swdio_drive(true);
 
 		int ack = buf_get_u32(trn_ack_data_parity_trn, 1, 3);
 		uint32_t data = buf_get_u32(trn_ack_data_parity_trn, 1 + 3, 32);
@@ -492,9 +667,9 @@ static void bitbang_swd_write_reg(uint8_t cmd, uint32_t value, uint32_t ap_delay
 		cmd |= SWD_CMD_START | (1 << 7);
 		bitbang_exchange(false, &cmd, 0, 8);
 
-		bitbang_interface->swdio_drive(false);
+		bitbang_interface_swdio_drive(false);
 		bitbang_exchange(true, trn_ack_data_parity_trn, 0, 1 + 3 + 1);
-		bitbang_interface->swdio_drive(true);
+		bitbang_interface_swdio_drive(true);
 		bitbang_exchange(false, trn_ack_data_parity_trn, 1 + 3 + 1, 32 + 1);
 
 		int ack = buf_get_u32(trn_ack_data_parity_trn, 1, 3);
